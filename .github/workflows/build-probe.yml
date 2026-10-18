@@ -42,11 +42,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android API 36
-        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+      - name: Install Android API 36 using runner SDK
+        run: |
+          set -eu
+          : "${ANDROID_HOME:?Android SDK not preinstalled on runner}"
+          sdkmanager_path="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | sort -V | tail -1)"
+          test -n "$sdkmanager_path"
+          yes | "$sdkmanager_path" --licenses >/dev/null || true
+          "$sdkmanager_path" "platforms;android-36" "build-tools;35.0.0"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
