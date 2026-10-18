@@ -34,6 +34,9 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
     private lateinit var report: TextView
     private lateinit var button: Button
     private lateinit var p2pButton: Button
+    private lateinit var allButton: Button
+    private var allInOne = false
+    private var allStatus = "Not started"
     private var p2pStatus = "Not tested"
     private var p2pPeers = "Not queried"
     private lateinit var mode: Spinner
@@ -108,6 +111,11 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
                 listOf("iPhone Bluetooth OFF", "iPhone Bluetooth ON + AirDrop Everyone"))
         }
         root.addView(mode)
+        allButton = Button(this).apply {
+            text = "RUN ALL DIAGNOSTICS (one tap)"
+            setOnClickListener { runAllDiagnostics() }
+        }
+        root.addView(allButton)
         root.addView(button)
         p2pButton = Button(this).apply {
             text = "Test Wi-Fi Direct peer discovery (not AirDrop)"
@@ -119,6 +127,45 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             fitsSystemWindows = true
             addView(root)
         })
+        render()
+    }
+
+    private fun runAllDiagnostics() {
+        if (scanning) {
+            allStatus = "Already scanning; wait for scan to finish"
+            render()
+            return
+        }
+        allInOne = true
+        allStatus = "Checking permissions and starting BLE + Wi-Fi Direct"
+        val needed = mutableListOf<String>()
+        val ble = if (Build.VERSION.SDK_INT >= 31)
+            listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+        else listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        needed.addAll(ble)
+        needed.add(if (Build.VERSION.SDK_INT >= 33)
+            Manifest.permission.NEARBY_WIFI_DEVICES else Manifest.permission.ACCESS_FINE_LOCATION)
+        val missing = needed.distinct().filter {
+            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            allStatus = "Requesting Android permissions"
+            requestPermissions(missing.toTypedArray(), 104)
+        } else {
+            beginAllDiagnostics()
+        }
+        render()
+    }
+
+    private fun beginAllDiagnostics() {
+        allStatus = "Running BLE 15-second scan and Wi-Fi Direct discovery"
+        startP2pTest()
+        startScan()
+        handler.postDelayed({
+            allStatus = "COMPLETE (or see individual errors below). AWDL still unverified."
+            allInOne = false
+            render()
+        }, 16000)
         render()
     }
 
@@ -140,6 +187,15 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 104) {
+            if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED })
+                beginAllDiagnostics()
+            else {
+                allStatus = "Permission denied; cannot run complete test"
+                allInOne = false
+                render()
+            }
+        }
         if (requestCode == 103) {
             if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) startP2pTest()
             else { p2pStatus = "Nearby Wi-Fi permission denied"; render() }
@@ -270,11 +326,14 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             "android.hardware.wifi.aware"
         )
         report.text = buildString {
-            appendLine("Bada - nearby BLE diagnostic v6")
+            appendLine("Bada - nearby BLE diagnostic v7")
             appendLine("Device: " + Build.MANUFACTURER + " " + Build.MODEL)
             appendLine("Android SDK: " + Build.VERSION.SDK_INT)
             features.forEach { appendLine(it + ": " + packageManager.hasSystemFeature(it)) }
             appendLine()
+            appendLine("ONE-TAP COMPLETE DIAGNOSTICS: $allStatus")
+            appendLine("BLE scan runs for 15s; Wi-Fi Direct peer query starts in parallel.")
+            appendLine("This does not send files or establish an AirDrop session.")
             appendLine("Scanning: $scanning ($selectedMode)")
             appendLine("Choose OFF/ON, scan each for 15 seconds.")
             appendLine("Each scan adds a trial; most recent OFF/ON also shown.")
