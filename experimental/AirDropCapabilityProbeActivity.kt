@@ -21,6 +21,8 @@ import android.widget.ArrayAdapter
 import kotlin.math.roundToInt
 import android.net.wifi.WifiManager
 import android.content.Context
+import java.net.NetworkInterface
+import java.util.Collections
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -39,6 +41,7 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
     )
     private val typeRssi = mutableMapOf<Int, Pair<Int, Int>>()
     private val rssiBins = mutableMapOf<String, Int>()
+    private val payloadLengths = mutableMapOf<Int, MutableMap<Int, Int>>()
     private val trials = mutableMapOf<String, MutableList<Summary>>()
     private var sessionCounter = 0
     private var selectedMode = "iPhone Bluetooth OFF"
@@ -59,6 +62,8 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
                 rssiSamples++
                 val type = bytes.firstOrNull()?.toInt()?.and(0xff) ?: -1
                 appleTypes[type] = (appleTypes[type] ?: 0) + 1
+                val sizes = payloadLengths.getOrPut(type) { mutableMapOf() }
+                sizes[bytes.size] = (sizes[bytes.size] ?: 0) + 1
                 val prev = typeRssi[type] ?: Pair(0, 0)
                 typeRssi[type] = Pair(prev.first + result.rssi, prev.second + 1)
                 val bin = when {
@@ -158,6 +163,7 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
         appleTypes.clear()
         typeRssi.clear()
         rssiBins.clear()
+        payloadLengths.clear()
         lastError = ""
         try {
             scanner.startScan(null, ScanSettings.Builder()
@@ -200,7 +206,7 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             "android.hardware.wifi.aware"
         )
         report.text = buildString {
-            appendLine("Bada - nearby BLE diagnostic v4")
+            appendLine("Bada - nearby BLE diagnostic v5")
             appendLine("Device: " + Build.MANUFACTURER + " " + Build.MODEL)
             appendLine("Android SDK: " + Build.VERSION.SDK_INT)
             features.forEach { appendLine(it + ": " + packageManager.hasSystemFeature(it)) }
@@ -213,6 +219,26 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             appendLine("Wi-Fi Aware declared: " + packageManager.hasSystemFeature("android.hardware.wifi.aware"))
             appendLine("Wi-Fi Direct declared: " + packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT))
             appendLine("AWDL support: UNKNOWN; cannot be established from Android feature flags.")
+            appendLine("Network interface diagnostic (names only, no addresses):")
+            try {
+                val interfaces = NetworkInterface.getNetworkInterfaces()
+                if (interfaces == null) appendLine("  Interface list unavailable")
+                else {
+                    val entries = Collections.list(interfaces).sortedBy { it.name }
+                    if (entries.isEmpty()) appendLine("  No interfaces exposed")
+                    entries.forEach { nic ->
+                        val up = try { nic.isUp } catch (_: Exception) { false }
+                        val wirelessName = nic.name.startsWith("wlan") ||
+                            nic.name.startsWith("p2p") || nic.name.startsWith("aware") ||
+                            nic.name.startsWith("awdl")
+                        appendLine("  " + nic.name + " | up=" + up +
+                            " | candidateWiFiName=" + wirelessName)
+                    }
+                }
+            } catch (e: Exception) {
+                appendLine("  Interface inspection unavailable: " + e.javaClass.simpleName)
+            }
+            appendLine("An interface name cannot prove AWDL driver support.")
             appendLine()
             appendLine("BLE advertisements observed: $total")
             appendLine("Apple company ID (0x004C) advertisements: $applePackets")
@@ -224,6 +250,12 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             if (lastError.isNotBlank()) appendLine("Error: $lastError")
             appendLine("Apple RSSI histogram:")
             rssiBins.toSortedMap().forEach { (bin, count) -> appendLine("  $bin: $count") }
+            appendLine("Apple manufacturer payload sizes (bytes) by first byte:")
+            payloadLengths.toSortedMap().forEach { (type, sizes) ->
+                appendLine("  0x" + type.toString(16) + ": " +
+                    sizes.toSortedMap().entries.joinToString { it.key.toString() + "B=" + it.value })
+            }
+            appendLine("Payload size is not an AirDrop protocol identification.")
             appendLine("Per Apple type mean RSSI:")
             typeRssi.toSortedMap().forEach { (type, pair) ->
                 appendLine("  0x" + type.toString(16) + ": " +
@@ -259,7 +291,7 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             appendLine("Test with iPhone AirDrop set to Everyone for 10 minutes.")
             appendLine("Apple BLE packets may also come from watches, headphones, or other devices.")
             appendLine("This cannot identify an iPhone or confirm AirDrop or AWDL.")
-            appendLine("No device addresses or raw payloads are stored. Aggregate results are in memory only. No file transfer is implemented.")
+            appendLine("No device addresses, IP addresses, or raw payloads are stored. Aggregate results are in memory only. No file transfer is implemented.")
             appendLine("No Shizuku or root needed for this scan.")
         }
     }
