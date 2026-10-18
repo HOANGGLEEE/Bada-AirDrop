@@ -34,5 +34,5 @@ if "AirDropCapabilityProbeActivity" not in xml:
     </activity>
     """
     xml = xml.replace("</application>", activity + "</application>")
-    manifest.write_text(xml, encoding="utf-8")
+manifest.write_text(xml, encoding="utf-8")
 print("Debug-only capability activity installed; no AirDrop transport added.")
