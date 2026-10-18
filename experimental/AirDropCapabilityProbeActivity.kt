@@ -75,7 +75,7 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
 
     private fun requestAndStart() {
         val permissions = if (Build.VERSION.SDK_INT >= 31) {
-            arrayOf(Manifest.permission.BLUETOOTH_SCAN)
+            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
         } else {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }
