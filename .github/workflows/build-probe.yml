@@ -1,4 +1,4 @@
-name: Build VERIFIED Bada-AirDrop v3 APK
+name: Build VERIFIED Bada-AirDrop v4 APK
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: v3-build-${{ github.ref }}
+  group: v4-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,21 +24,22 @@ jobs:
       - name: Checkout exact experimental source revision
         uses: actions/checkout@v4
 
-      - name: Require v3 source and comparison screen
+      - name: Require v4 source and comparison screen
         run: |
           set -eu
-          grep -Fq 'diagnostic v3' experimental/AirDropCapabilityProbeActivity.kt
+          grep -Fq 'diagnostic v4' experimental/AirDropCapabilityProbeActivity.kt
           grep -Fq 'Saved comparison' experimental/AirDropCapabilityProbeActivity.kt
+          grep -Fq 'Mean ON - OFF across trials' experimental/AirDropCapabilityProbeActivity.kt
           echo "Build commit: $GITHUB_SHA"
           sha256sum experimental/AirDropCapabilityProbeActivity.kt
 
       - name: Fetch original Bada source
         run: git clone --depth 1 https://github.com/kyujin-cho/Bada.git source
 
-      - name: Inject v3 BLE diagnostics and Android permissions
+      - name: Inject v4 BLE diagnostics and Android permissions
         run: |
           python3 scripts/inject_probe.py
-          grep -Fq 'diagnostic v3' source/app/src/debug/kotlin/dev/bluehouse/bada/debug/AirDropCapabilityProbeActivity.kt
+          grep -Fq 'diagnostic v4' source/app/src/debug/kotlin/dev/bluehouse/bada/debug/AirDropCapabilityProbeActivity.kt
           grep -Fq 'android.permission.BLUETOOTH_SCAN' source/app/src/debug/AndroidManifest.xml
 
       - name: Setup JDK 17
@@ -65,43 +66,47 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
-      - name: Verify v3 marker INSIDE the compiled APK
+      - name: Verify v4 marker INSIDE the compiled APK
         run: |
           set -eu
           apk="$(find source/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
           test -n "$apk"
           test -s "$apk"
           unzip -t "$apk" >/dev/null
-          unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Bada - nearby BLE diagnostic v3' || {
-            echo "::error::APK does NOT contain the v3 screen. Refusing to publish."
+          unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Bada - nearby BLE diagnostic v4' || {
+            echo "::error::APK does NOT contain the v4 screen. Refusing to publish."
             exit 1
           }
           unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Saved comparison' || {
             echo "::error::APK does NOT contain the comparison UI. Refusing to publish."
             exit 1
           }
-          cp "$apk" Bada-AirDrop-v3-debug.apk
-          sha256sum Bada-AirDrop-v3-debug.apk
-          echo "## VERIFIED Bada-AirDrop v3" >> "$GITHUB_STEP_SUMMARY"
+          unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Mean ON - OFF across trials' || {
+            echo "::error::APK does NOT contain v4 repeated-trials UI. Refusing to publish."
+            exit 1
+          }
+          cp "$apk" Bada-AirDrop-v4-debug.apk
+          sha256sum Bada-AirDrop-v4-debug.apk
+          echo "## VERIFIED Bada-AirDrop v4" >> "$GITHUB_STEP_SUMMARY"
           echo "Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
-          echo "Built APK contains both v3 and comparison UI strings." >> "$GITHUB_STEP_SUMMARY"
+          echo "Built APK contains both v4 and comparison UI strings." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:
-          name: Bada-AirDrop-v3-VERIFIED-APK
-          path: Bada-AirDrop-v3-debug.apk
+          name: Bada-AirDrop-v4-VERIFIED-APK
+          path: Bada-AirDrop-v4-debug.apk
           if-no-files-found: error
 
-      - name: Publish verified v3 APK to GitHub Releases
+      - name: Publish verified v4 APK to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          sha256="$(sha256sum Bada-AirDrop-v3-debug.apk | cut -d' ' -f1)"
-          gh release create "v3-verified-$GITHUB_RUN_NUMBER" Bada-AirDrop-v3-debug.apk \
+          sha256="$(sha256sum Bada-AirDrop-v4-debug.apk | cut -d' ' -f1)"
+          gh release create "v4-verified-$GITHUB_RUN_NUMBER" Bada-AirDrop-v4-debug.apk \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Bada-AirDrop v3 VERIFIED (build $GITHUB_RUN_NUMBER)" \
-            --notes "VERIFIED compiled APK includes v3 paired OFF/ON BLE scan comparison, mean RSSI, and Apple advertisement type counts. Build source commit: $GITHUB_SHA. SHA-256: $sha256. This is a diagnostics-only experimental APK; it does not support AirDrop file transfer." \
+            --title "Bada-AirDrop v4 VERIFIED (build $GITHUB_RUN_NUMBER)" \
+            --notes "VERIFIED compiled APK includes v4 paired OFF/ON BLE scan comparison, mean RSSI, and Apple advertisement type counts. Build source commit: $GITHUB_SHA. SHA-256: $sha256. This is a diagnostics-only experimental APK; it does not support AirDrop file transfer." \
             --prerelease --latest=false
-          echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/v3-verified-$GITHUB_RUN_NUMBER" >> "$GITHUB_STEP_SUMMARY"
+          echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/v4-verified-$GITHUB_RUN_NUMBER" >> "$GITHUB_STEP_SUMMARY"
