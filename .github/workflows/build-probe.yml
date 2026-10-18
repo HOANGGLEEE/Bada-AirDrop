@@ -1,4 +1,4 @@
-name: Build VERIFIED Bada-AirDrop v7 APK
+name: Build VERIFIED Bada-AirDrop v8 APK
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: v7-build-${{ github.ref }}
+  group: v8-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,25 +24,26 @@ jobs:
       - name: Checkout exact experimental source revision
         uses: actions/checkout@v4
 
-      - name: Require v7 source and comparison screen
+      - name: Require v8 source and comparison screen
         run: |
           set -eu
-          grep -Fq 'diagnostic v7' experimental/AirDropCapabilityProbeActivity.kt
+          grep -Fq 'diagnostic v8' experimental/AirDropCapabilityProbeActivity.kt
           grep -Fq 'Saved comparison' experimental/AirDropCapabilityProbeActivity.kt
           grep -Fq 'Mean ON - OFF across trials' experimental/AirDropCapabilityProbeActivity.kt
           grep -Fq 'Network interface diagnostic' experimental/AirDropCapabilityProbeActivity.kt
           grep -Fq 'Wi-Fi Direct active test' experimental/AirDropCapabilityProbeActivity.kt
           grep -Fq 'ONE-TAP COMPLETE DIAGNOSTICS' experimental/AirDropCapabilityProbeActivity.kt
+          grep -Fq 'AirDrop-specific BLE TLV detection' experimental/AirDropCapabilityProbeActivity.kt
           echo "Build commit: $GITHUB_SHA"
           sha256sum experimental/AirDropCapabilityProbeActivity.kt
 
       - name: Fetch original Bada source
         run: git clone --depth 1 https://github.com/kyujin-cho/Bada.git source
 
-      - name: Inject v7 BLE diagnostics and Android permissions
+      - name: Inject v8 BLE diagnostics and Android permissions
         run: |
           python3 scripts/inject_probe.py
-          grep -Fq 'diagnostic v7' source/app/src/debug/kotlin/dev/bluehouse/bada/debug/AirDropCapabilityProbeActivity.kt
+          grep -Fq 'diagnostic v8' source/app/src/debug/kotlin/dev/bluehouse/bada/debug/AirDropCapabilityProbeActivity.kt
           grep -Fq 'android.permission.BLUETOOTH_SCAN' source/app/src/debug/AndroidManifest.xml
           grep -Fq 'android.permission.NEARBY_WIFI_DEVICES' source/app/src/debug/AndroidManifest.xml
 
@@ -70,15 +71,15 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
-      - name: Verify v7 marker INSIDE the compiled APK
+      - name: Verify v8 marker INSIDE the compiled APK
         run: |
           set -eu
           apk="$(find source/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
           test -n "$apk"
           test -s "$apk"
           unzip -t "$apk" >/dev/null
-          unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Bada - nearby BLE diagnostic v7' || {
-            echo "::error::APK does NOT contain the v7 screen. Refusing to publish."
+          unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Bada - nearby BLE diagnostic v8' || {
+            echo "::error::APK does NOT contain the v8 screen. Refusing to publish."
             exit 1
           }
           unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Saved comparison' || {
@@ -86,11 +87,11 @@ jobs:
             exit 1
           }
           unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Mean ON - OFF across trials' || {
-            echo "::error::APK does NOT contain v7 repeated-trials UI. Refusing to publish."
+            echo "::error::APK does NOT contain v8 repeated-trials UI. Refusing to publish."
             exit 1
           }
           unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Network interface diagnostic' || {
-            echo "::error::APK lacks v7 network interface diagnostics"
+            echo "::error::APK lacks v8 network interface diagnostics"
             exit 1
           }
           unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Wi-Fi Direct active test' || {
@@ -98,31 +99,35 @@ jobs:
             exit 1
           }
           unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'ONE-TAP COMPLETE DIAGNOSTICS' || {
-            echo "::error::APK lacks v7 one-tap diagnostics"
+            echo "::error::APK lacks v8 one-tap diagnostics"
             exit 1
           }
-          cp "$apk" Bada-AirDrop-v7-debug.apk
-          sha256sum Bada-AirDrop-v7-debug.apk
-          echo "## VERIFIED Bada-AirDrop v7" >> "$GITHUB_STEP_SUMMARY"
+          unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'AirDrop-specific BLE TLV detection' || {
+            echo "::error::APK lacks v8 AirDrop TLV detection"
+            exit 1
+          }
+          cp "$apk" Bada-AirDrop-v8-debug.apk
+          sha256sum Bada-AirDrop-v8-debug.apk
+          echo "## VERIFIED Bada-AirDrop v8" >> "$GITHUB_STEP_SUMMARY"
           echo "Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
-          echo "Built APK contains both v7 and comparison UI strings." >> "$GITHUB_STEP_SUMMARY"
+          echo "Built APK contains both v8 and comparison UI strings." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:
-          name: Bada-AirDrop-v7-VERIFIED-APK
-          path: Bada-AirDrop-v7-debug.apk
+          name: Bada-AirDrop-v8-VERIFIED-APK
+          path: Bada-AirDrop-v8-debug.apk
           if-no-files-found: error
 
-      - name: Publish verified v7 APK to GitHub Releases
+      - name: Publish verified v8 APK to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          sha256="$(sha256sum Bada-AirDrop-v7-debug.apk | cut -d' ' -f1)"
-          gh release create "v7-verified-$GITHUB_RUN_NUMBER" Bada-AirDrop-v7-debug.apk \
+          sha256="$(sha256sum Bada-AirDrop-v8-debug.apk | cut -d' ' -f1)"
+          gh release create "v8-verified-$GITHUB_RUN_NUMBER" Bada-AirDrop-v8-debug.apk \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Bada-AirDrop v7 VERIFIED (build $GITHUB_RUN_NUMBER)" \
-            --notes "VERIFIED compiled APK includes v7 one-tap BLE and Wi-Fi Direct diagnostics, interface visibility, permission checks, and earlier OFF/ON comparison tools. This is NOT an AWDL or AirDrop implementation. Build source commit: $GITHUB_SHA. SHA-256: $sha256. This is a diagnostics-only experimental APK; it does not support AirDrop file transfer." \
+            --title "Bada-AirDrop v8 VERIFIED (build $GITHUB_RUN_NUMBER)" \
+            --notes "VERIFIED compiled APK includes v8 Apple Continuity TLV 0x05 AirDrop-format advertisement detection plus one-tap diagnostics. This is NOT an AWDL or AirDrop implementation. Build source commit: $GITHUB_SHA. SHA-256: $sha256. This is a diagnostics-only experimental APK; it does not support AirDrop file transfer." \
             --prerelease --latest=false
-          echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/v7-verified-$GITHUB_RUN_NUMBER" >> "$GITHUB_STEP_SUMMARY"
+          echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/v8-verified-$GITHUB_RUN_NUMBER" >> "$GITHUB_STEP_SUMMARY"
