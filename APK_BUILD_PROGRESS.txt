@@ -1,2 +1,2 @@
-Workflow run: https://github.com/HOANGGLEEE/Bada-AirDrop/actions/runs/39086547375
+Workflow run: https://github.com/HOANGGLEEE/Bada-AirDrop/actions/runs/39086566076
 State: started; this is not a completed APK
