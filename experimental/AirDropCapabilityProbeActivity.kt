@@ -20,6 +20,7 @@ import android.widget.Spinner
 import android.widget.ArrayAdapter
 import kotlin.math.roundToInt
 import android.net.wifi.WifiManager
+import android.net.wifi.p2p.WifiP2pManager
 import android.content.Context
 import java.net.NetworkInterface
 import java.util.Collections
@@ -32,6 +33,9 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var report: TextView
     private lateinit var button: Button
+    private lateinit var p2pButton: Button
+    private var p2pStatus = "Not tested"
+    private var p2pPeers = "Not queried"
     private lateinit var mode: Spinner
     private val sessions = mutableMapOf<String, Summary>()
     private data class Summary(
@@ -105,6 +109,11 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
         }
         root.addView(mode)
         root.addView(button)
+        p2pButton = Button(this).apply {
+            text = "Test Wi-Fi Direct peer discovery (not AirDrop)"
+            setOnClickListener { startP2pTest() }
+        }
+        root.addView(p2pButton)
         root.addView(report)
         setContentView(ScrollView(this).apply {
             fitsSystemWindows = true
@@ -131,6 +140,10 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
         requestCode: Int, permissions: Array<out String>, grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 103) {
+            if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) startP2pTest()
+            else { p2pStatus = "Nearby Wi-Fi permission denied"; render() }
+        }
         if (requestCode == 102) {
             if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
                 startScan()
@@ -138,6 +151,57 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
                 lastError = "Bluetooth scan permission denied"
                 render()
             }
+        }
+    }
+
+    private fun startP2pTest() {
+        val required = if (Build.VERSION.SDK_INT >= 33)
+            Manifest.permission.NEARBY_WIFI_DEVICES else Manifest.permission.ACCESS_FINE_LOCATION
+        if (checkSelfPermission(required) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(required), 103)
+            return
+        }
+        try {
+            val manager = getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
+            if (manager == null) {
+                p2pStatus = "Wi-Fi Direct service unavailable"
+                render()
+                return
+            }
+            val channel = manager.initialize(this, mainLooper, null)
+            if (channel == null) {
+                p2pStatus = "Wi-Fi Direct channel initialization failed"
+                render()
+                return
+            }
+            p2pStatus = "Requesting peer discovery (Wi-Fi Direct, NOT AWDL)"
+            p2pPeers = "Awaiting result"
+            render()
+            manager.discoverPeers(channel, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    p2pStatus = "Discovery request accepted (NOT proof of connection)"
+                    render()
+                    handler.postDelayed({
+                        try {
+                            manager.requestPeers(channel) { peers ->
+                                p2pPeers = "Visible Wi-Fi Direct peers: " + peers.deviceList.size +
+                                    " (identities intentionally hidden)"
+                                render()
+                            }
+                        } catch (e: Exception) {
+                            p2pPeers = "Peer query error: " + e.javaClass.simpleName
+                            render()
+                        }
+                    }, 10000)
+                }
+                override fun onFailure(reason: Int) {
+                    p2pStatus = "Wi-Fi Direct discovery rejected: reason=$reason"
+                    render()
+                }
+            })
+        } catch (e: Exception) {
+            p2pStatus = "Wi-Fi Direct error: " + e.javaClass.simpleName
+            render()
         }
     }
 
@@ -206,7 +270,7 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             "android.hardware.wifi.aware"
         )
         report.text = buildString {
-            appendLine("Bada - nearby BLE diagnostic v5")
+            appendLine("Bada - nearby BLE diagnostic v6")
             appendLine("Device: " + Build.MANUFACTURER + " " + Build.MODEL)
             appendLine("Android SDK: " + Build.VERSION.SDK_INT)
             features.forEach { appendLine(it + ": " + packageManager.hasSystemFeature(it)) }
@@ -215,6 +279,11 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             appendLine("Choose OFF/ON, scan each for 15 seconds.")
             appendLine("Each scan adds a trial; most recent OFF/ON also shown.")
             appendLine("Completed trials: $sessionCounter")
+            appendLine("Wi-Fi Direct active test (NOT AWDL):")
+            appendLine("  $p2pStatus")
+            appendLine("  $p2pPeers")
+            appendLine("  Android Location setting may need to be ON for peer discovery.")
+            appendLine("  Successful Wi-Fi Direct discovery does not establish AirDrop support.")
             appendLine("Wi-Fi capability (NOT AWDL):")
             appendLine("Wi-Fi Aware declared: " + packageManager.hasSystemFeature("android.hardware.wifi.aware"))
             appendLine("Wi-Fi Direct declared: " + packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT))
