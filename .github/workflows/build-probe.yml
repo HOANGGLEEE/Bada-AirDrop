@@ -1,4 +1,4 @@
-name: Build and publish experimental Bada APK
+name: Build VERIFIED Bada-AirDrop v3 APK
 
 on:
   push:
@@ -12,31 +12,34 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: v3-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   apk:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout experimental repository
+      - name: Checkout exact experimental source revision
         uses: actions/checkout@v4
 
-      - name: Mark CI build as started
+      - name: Require v3 source and comparison screen
         run: |
-          echo "Workflow run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > APK_BUILD_PROGRESS.txt
-          echo "State: started; this is not a completed APK" >> APK_BUILD_PROGRESS.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add APK_BUILD_PROGRESS.txt
-          git commit -m "Record APK CI build start #$GITHUB_RUN_NUMBER"
-          git fetch origin main
-          git rebase origin/main
-          git push origin HEAD:main
+          set -eu
+          grep -Fq 'diagnostic v3' experimental/AirDropCapabilityProbeActivity.kt
+          grep -Fq 'Saved comparison' experimental/AirDropCapabilityProbeActivity.kt
+          echo "Build commit: $GITHUB_SHA"
+          sha256sum experimental/AirDropCapabilityProbeActivity.kt
 
-      - name: Fetch original Bada project
+      - name: Fetch original Bada source
         run: git clone --depth 1 https://github.com/kyujin-cho/Bada.git source
 
-      - name: Inject read-only AirDrop capability screen
-        run: python3 scripts/inject_probe.py
+      - name: Inject v3 BLE diagnostics and Android permissions
+        run: |
+          python3 scripts/inject_probe.py
+          grep -Fq 'diagnostic v3' source/app/src/debug/kotlin/dev/bluehouse/bada/debug/AirDropCapabilityProbeActivity.kt
+          grep -Fq 'android.permission.BLUETOOTH_SCAN' source/app/src/debug/AndroidManifest.xml
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -44,7 +47,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android API 36 using runner SDK
+      - name: Setup Android SDK packages
         run: |
           set -eu
           : "${ANDROID_HOME:?Android SDK not preinstalled on runner}"
@@ -56,49 +59,49 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build a signed debug APK
+      - name: Compile APK
         working-directory: source
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleDebug --stacktrace --no-daemon
 
-      - name: Prepare installable APK
+      - name: Verify v3 marker INSIDE the compiled APK
         run: |
           set -eu
-          apk="$(find source/app/build/outputs/apk/debug -name '*.apk' -type f -print -quit)"
+          apk="$(find source/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
           test -n "$apk"
-          cp "$apk" Bada-AirDrop-Capability-debug.apk
-          test -s Bada-AirDrop-Capability-debug.apk
-          sha256sum Bada-AirDrop-Capability-debug.apk
+          test -s "$apk"
+          unzip -t "$apk" >/dev/null
+          unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Bada - nearby BLE diagnostic v3' || {
+            echo "::error::APK does NOT contain the v3 screen. Refusing to publish."
+            exit 1
+          }
+          unzip -p "$apk" 'classes*.dex' | strings | grep -Fq 'Saved comparison' || {
+            echo "::error::APK does NOT contain the comparison UI. Refusing to publish."
+            exit 1
+          }
+          cp "$apk" Bada-AirDrop-v3-debug.apk
+          sha256sum Bada-AirDrop-v3-debug.apk
+          echo "## VERIFIED Bada-AirDrop v3" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "Built APK contains both v3 and comparison UI strings." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload build artifact
+      - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:
-          name: Bada-AirDrop-Capability-APK
-          path: Bada-AirDrop-Capability-debug.apk
+          name: Bada-AirDrop-v3-VERIFIED-APK
+          path: Bada-AirDrop-v3-debug.apk
           if-no-files-found: error
 
-      - name: Publish APK as GitHub prerelease
+      - name: Publish verified v3 APK to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "probe-$GITHUB_RUN_NUMBER" Bada-AirDrop-Capability-debug.apk \
+          set -eu
+          sha256="$(sha256sum Bada-AirDrop-v3-debug.apk | cut -d' ' -f1)"
+          gh release create "v3-verified-$GITHUB_RUN_NUMBER" Bada-AirDrop-v3-debug.apk \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Bada AirDrop capability probe #$GITHUB_RUN_NUMBER" \
-            --notes "Experimental signed debug APK. Not real AirDrop/AWDL transfer. Uses original Bada sources at build time. Installs separately from Bada release." \
+            --title "Bada-AirDrop v3 VERIFIED (build $GITHUB_RUN_NUMBER)" \
+            --notes "VERIFIED compiled APK includes v3 paired OFF/ON BLE scan comparison, mean RSSI, and Apple advertisement type counts. Build source commit: $GITHUB_SHA. SHA-256: $sha256. This is a diagnostics-only experimental APK; it does not support AirDrop file transfer." \
             --prerelease --latest=false
-
-      - name: Record verified APK link and checksum
-        run: |
-          printf '# Latest successfully published APK\n\n' > APK_BUILD_STATUS.md
-          printf 'Download: https://github.com/%s/releases/download/probe-%s/Bada-AirDrop-Capability-debug.apk\n\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_NUMBER" >> APK_BUILD_STATUS.md
-          printf 'SHA-256: \`%s\`\n\n' "$(sha256sum Bada-AirDrop-Capability-debug.apk | cut -d' ' -f1)" >> APK_BUILD_STATUS.md
-          printf 'Build: https://github.com/%s/actions/runs/%s\n\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> APK_BUILD_STATUS.md
-          printf 'This is a debug capability probe. Actual AirDrop file transfer is not implemented.\n' >> APK_BUILD_STATUS.md
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add APK_BUILD_STATUS.md
-          git commit -m "Publish verified APK download for Actions run $GITHUB_RUN_NUMBER"
-          git fetch origin main
-          git rebase origin/main
-          git push origin HEAD:main
+          echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/v3-verified-$GITHUB_RUN_NUMBER" >> "$GITHUB_STEP_SUMMARY"
