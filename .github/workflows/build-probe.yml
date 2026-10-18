@@ -20,6 +20,16 @@ jobs:
       - name: Checkout experimental repository
         uses: actions/checkout@v4
 
+      - name: Mark CI build as started
+        run: |
+          echo "Workflow run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > APK_BUILD_PROGRESS.txt
+          echo "State: started; this is not a completed APK" >> APK_BUILD_PROGRESS.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add APK_BUILD_PROGRESS.txt
+          git commit -m "Record APK CI build start #$GITHUB_RUN_NUMBER"
+          git push origin HEAD:main
+
       - name: Fetch original Bada project
         run: git clone --depth 1 https://github.com/kyujin-cho/Bada.git source
 
