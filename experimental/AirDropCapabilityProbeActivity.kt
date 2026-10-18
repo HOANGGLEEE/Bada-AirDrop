@@ -61,6 +61,12 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
     private var airDropValid18Packets = 0
     private var malformedAppleTlvPackets = 0
     private var airDropRssiSum = 0
+    private var airdropCandidatePackets = 0
+    private var airdropInvalidLengthPackets = 0
+    private var airdropIncompletePackets = 0
+    private val airdropLengthHistogram = mutableMapOf<Int, Int>()
+    private val airdropOffsets = mutableMapOf<Int, Int>()
+    private val observedTlvTypes = mutableMapOf<Int, Int>()
     private var lastError = ""
     private val appleTypes = mutableMapOf<Int, Int>()
     private val callback = object : ScanCallback() {
@@ -69,31 +75,43 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             val bytes = result.scanRecord?.getManufacturerSpecificData(0x004C)
             if (bytes != null) {
                 applePackets++
-                // Apple Continuity TLV: type, length, value. Do not store contact hashes.
+                // Parse Apple manufacturer data as bounded type-length-value records.
+                // Do not persist or display any payload bytes, contact hashes or addresses.
                 var offset = 0
-                var foundAirDrop = false
-                var foundExpectedLength = false
                 var malformed = false
-                while (offset + 2 <= bytes.size) {
+                var foundAirDrop = false
+                var validAirDrop = false
+                while (offset < bytes.size) {
+                    if (offset + 2 > bytes.size) {
+                        malformed = true
+                        if ((bytes[offset].toInt() and 0xff) == 0x05) airdropIncompletePackets++
+                        break
+                    }
                     val messageType = bytes[offset].toInt() and 0xff
                     val messageLength = bytes[offset + 1].toInt() and 0xff
                     val next = offset + 2 + messageLength
                     if (next > bytes.size) {
                         malformed = true
+                        if (messageType == 0x05) airdropIncompletePackets++
                         break
                     }
+                    observedTlvTypes[messageType] = (observedTlvTypes[messageType] ?: 0) + 1
                     if (messageType == 0x05) {
                         foundAirDrop = true
-                        if (messageLength == 0x12) foundExpectedLength = true
+                        airdropLengthHistogram[messageLength] =
+                            (airdropLengthHistogram[messageLength] ?: 0) + 1
+                        airdropOffsets[offset] = (airdropOffsets[offset] ?: 0) + 1
+                        if (messageLength == 18) validAirDrop = true
+                        else airdropInvalidLengthPackets++
                     }
                     offset = next
                 }
-                if (offset != bytes.size) malformed = true
                 if (malformed) malformedAppleTlvPackets++
                 if (foundAirDrop && !malformed) {
                     airDropTlvPackets++
                     airDropRssiSum += result.rssi
-                    if (foundExpectedLength) airDropValid18Packets++
+                    if (validAirDrop) airDropValid18Packets++
+                    else airdropCandidatePackets++
                 }
                 rssiSum += result.rssi
                 rssiSamples++
@@ -312,6 +330,12 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
         airDropValid18Packets = 0
         malformedAppleTlvPackets = 0
         airDropRssiSum = 0
+        airdropCandidatePackets = 0
+        airdropInvalidLengthPackets = 0
+        airdropIncompletePackets = 0
+        airdropLengthHistogram.clear()
+        airdropOffsets.clear()
+        observedTlvTypes.clear()
         rssiSum = 0
         rssiSamples = 0
         appleTypes.clear()
@@ -360,7 +384,7 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             "android.hardware.wifi.aware"
         )
         report.text = buildString {
-            appendLine("Bada - nearby BLE diagnostic v8")
+            appendLine("Bada - nearby BLE diagnostic v9")
             appendLine("Device: " + Build.MANUFACTURER + " " + Build.MODEL)
             appendLine("Android SDK: " + Build.VERSION.SDK_INT)
             features.forEach { appendLine(it + ": " + packageManager.hasSystemFeature(it)) }
@@ -407,12 +431,21 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             appendLine("AirDrop-specific BLE TLV detection:")
             appendLine("  Apple TLV type 0x05 detected: $airDropTlvPackets")
             appendLine("  Type 0x05 with documented 18-byte payload: $airDropValid18Packets")
+            appendLine("  Candidate 0x05 with unexpected length: $airdropCandidatePackets")
+            appendLine("  Invalid-length 0x05 records: $airdropInvalidLengthPackets")
+            appendLine("  Incomplete 0x05 records: $airdropIncompletePackets")
+            appendLine("  0x05 payload-length histogram: " +
+                airdropLengthHistogram.toSortedMap().entries.joinToString { it.key.toString() + "B=" + it.value })
+            appendLine("  0x05 byte offsets: " +
+                airdropOffsets.toSortedMap().entries.joinToString { it.key.toString() + "=" + it.value })
+            appendLine("  All parsed Apple TLV types: " +
+                observedTlvTypes.toSortedMap().entries.joinToString { "0x" + it.key.toString(16) + "=" + it.value })
             appendLine("  Malformed or incomplete Apple TLV packets: $malformedAppleTlvPackets")
             appendLine("  Mean RSSI of 0x05 packets: " +
                 (if (airDropTlvPackets > 0) (airDropRssiSum / airDropTlvPackets).toString() + " dBm" else "N/A"))
             appendLine("  Verdict: " + when {
-                airDropValid18Packets > 0 -> "AirDrop-format BLE advertisements observed; sender identity NOT verified"
-                airDropTlvPackets > 0 -> "Apple 0x05 TLV observed, but expected length not seen"
+                airDropValid18Packets > 0 -> "VALID FORMAT: 0x05 length 18; iPhone identity NOT verified"
+                airDropTlvPackets > 0 -> "UNVERIFIED: 0x05 present but 18-byte AirDrop structure ABSENT"
                 else -> "No AirDrop-specific 0x05 TLV observed during this scan"
             })
             appendLine("  Zero matches does NOT prove the iPhone cannot use AirDrop.")
