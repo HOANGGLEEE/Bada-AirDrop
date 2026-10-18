@@ -16,6 +16,9 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.widget.Button
+import android.widget.Spinner
+import android.widget.ArrayAdapter
+import kotlin.math.roundToInt
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -25,6 +28,12 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var report: TextView
     private lateinit var button: Button
+    private lateinit var mode: Spinner
+    private val sessions = mutableMapOf<String, Summary>()
+    private data class Summary(val packets: Int, val apple: Int, val rssi: Int, val samples: Int, val types: Map<Int, Int>)
+    private var selectedMode = "iPhone Bluetooth OFF"
+    private var rssiSum = 0
+    private var rssiSamples = 0
     private var scanning = false
     private var total = 0
     private var applePackets = 0
@@ -36,6 +45,8 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             val bytes = result.scanRecord?.getManufacturerSpecificData(0x004C)
             if (bytes != null) {
                 applePackets++
+                rssiSum += result.rssi
+                rssiSamples++
                 val type = bytes.firstOrNull()?.toInt()?.and(0xff) ?: -1
                 appleTypes[type] = (appleTypes[type] ?: 0) + 1
             }
@@ -64,6 +75,12 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             setTextIsSelectable(true)
             setPadding(0, 16, 0, 16)
         }
+        mode = Spinner(this).apply {
+            adapter = ArrayAdapter(this@AirDropCapabilityProbeActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf("iPhone Bluetooth OFF", "iPhone Bluetooth ON + AirDrop Everyone"))
+        }
+        root.addView(mode)
         root.addView(button)
         root.addView(report)
         setContentView(ScrollView(this).apply {
@@ -115,8 +132,11 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             render()
             return
         }
+        selectedMode = mode.selectedItem.toString()
         total = 0
         applePackets = 0
+        rssiSum = 0
+        rssiSamples = 0
         appleTypes.clear()
         lastError = ""
         try {
@@ -140,6 +160,9 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
                 manager.adapter?.bluetoothLeScanner?.stopScan(callback)
             } catch (_: SecurityException) { }
         }
+        if (scanning) {
+            sessions[selectedMode] = Summary(total, applePackets, rssiSum, rssiSamples, appleTypes.toMap())
+        }
         scanning = false
         render()
     }
@@ -153,12 +176,15 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             "android.hardware.wifi.aware"
         )
         report.text = buildString {
-            appendLine("Bada - nearby BLE diagnostic v2")
+            appendLine("Bada - nearby BLE diagnostic v3")
             appendLine("Device: " + Build.MANUFACTURER + " " + Build.MODEL)
             appendLine("Android SDK: " + Build.VERSION.SDK_INT)
             features.forEach { appendLine(it + ": " + packageManager.hasSystemFeature(it)) }
             appendLine()
-            appendLine("Scanning: $scanning")
+            appendLine("Scanning: $scanning ($selectedMode)")
+            appendLine("Choose OFF/ON, scan each for 15 seconds.")
+            appendLine("Each scan overwrites its previous condition.")
+            appendLine()
             appendLine("BLE advertisements observed: $total")
             appendLine("Apple company ID (0x004C) advertisements: $applePackets")
             appendLine("Apple manufacturer data first-byte counts:")
@@ -168,10 +194,24 @@ class AirDropCapabilityProbeActivity : AppCompatActivity() {
             }
             if (lastError.isNotBlank()) appendLine("Error: $lastError")
             appendLine()
+            appendLine("Saved comparison (Apple packets, mean RSSI):")
+            listOf("iPhone Bluetooth OFF", "iPhone Bluetooth ON + AirDrop Everyone").forEach { key ->
+                val item = sessions[key]
+                appendLine(key + ": " + (item?.apple?.toString() ?: "not scanned") +
+                    " | " + (if (item != null && item.samples > 0) (item.rssi / item.samples).toString() + " dBm" else "RSSI unavailable"))
+                if (item != null) appendLine("  types: " + item.types.toSortedMap().entries.joinToString { "0x" + it.key.toString(16) + "=" + it.value })
+            }
+            val off = sessions["iPhone Bluetooth OFF"]
+            val on = sessions["iPhone Bluetooth ON + AirDrop Everyone"]
+            if (off != null && on != null) {
+                appendLine("ON - OFF Apple packet difference: " + (on.apple - off.apple))
+                appendLine("Packet counts vary naturally; this is not proof of iPhone identity.")
+            }
+            appendLine()
             appendLine("Test with iPhone AirDrop set to Everyone for 10 minutes.")
             appendLine("Apple BLE packets may also come from watches, headphones, or other devices.")
             appendLine("This cannot identify an iPhone or confirm AirDrop or AWDL.")
-            appendLine("No device addresses are stored. No file transfer is implemented.")
+            appendLine("No device addresses or raw payloads are stored. No file transfer is implemented.")
             appendLine("No Shizuku or root needed for this scan.")
         }
     }
