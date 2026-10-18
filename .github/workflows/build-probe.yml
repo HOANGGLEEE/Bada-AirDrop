@@ -72,3 +72,16 @@ jobs:
             --title "Bada AirDrop capability probe #$GITHUB_RUN_NUMBER" \
             --notes "Experimental signed debug APK. Not real AirDrop/AWDL transfer. Uses original Bada sources at build time. Installs separately from Bada release." \
             --prerelease --latest=false
+
+      - name: Record verified APK link and checksum
+        run: |
+          printf '# Latest successfully published APK\n\n' > APK_BUILD_STATUS.md
+          printf 'Download: https://github.com/%s/releases/download/probe-%s/Bada-AirDrop-Capability-debug.apk\n\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_NUMBER" >> APK_BUILD_STATUS.md
+          printf 'SHA-256: \`%s\`\n\n' "$(sha256sum Bada-AirDrop-Capability-debug.apk | cut -d' ' -f1)" >> APK_BUILD_STATUS.md
+          printf 'Build: https://github.com/%s/actions/runs/%s\n\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> APK_BUILD_STATUS.md
+          printf 'This is a debug capability probe. Actual AirDrop file transfer is not implemented.\n' >> APK_BUILD_STATUS.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add APK_BUILD_STATUS.md
+          git commit -m "Publish verified APK download for Actions run $GITHUB_RUN_NUMBER"
+          git push origin HEAD:main
