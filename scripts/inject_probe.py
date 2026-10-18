@@ -14,6 +14,13 @@ if not manifest.exists():
         encoding="utf-8",
     )
 xml = manifest.read_text(encoding="utf-8")
+permissions = """<uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+"""
+if "android.permission.BLUETOOTH_SCAN" not in xml:
+    xml = xml.replace("<application", permissions + "<application", 1)
+
 if "AirDropCapabilityProbeActivity" not in xml:
     if "</application>" not in xml:
         raise RuntimeError("Upstream debug manifest format not understood")
