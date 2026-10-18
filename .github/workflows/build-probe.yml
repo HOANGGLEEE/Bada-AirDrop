@@ -1,68 +1,74 @@
-name: Build Bada AirDrop capability probe APK
+name: Build and publish experimental Bada APK
+
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/build-probe.yml'
+      - 'experimental/**'
+      - 'scripts/**'
   workflow_dispatch:
+
 permissions:
-  contents: read
+  contents: write
+
 jobs:
-  build:
+  apk:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Fetch upstream Bada source
+      - name: Checkout experimental repository
+        uses: actions/checkout@v4
+
+      - name: Fetch original Bada project
         run: git clone --depth 1 https://github.com/kyujin-cho/Bada.git source
-      - name: Add read-only AirDrop feasibility probe
-        run: |
-          mkdir -p source/app/src/debug/kotlin/dev/bluehouse/bada/debug
-          cat > source/app/src/debug/kotlin/dev/bluehouse/bada/debug/AirDropCapabilityProbeActivity.kt <<'KOTLIN'
-          package dev.bluehouse.bada.debug
-          import android.content.pm.PackageManager
-          import android.os.Build
-          import android.os.Bundle
-          import android.widget.ScrollView
-          import android.widget.TextView
-          import androidx.appcompat.app.AppCompatActivity
-          class AirDropCapabilityProbeActivity : AppCompatActivity() {
-              override fun onCreate(savedInstanceState: Bundle?) {
-                  super.onCreate(savedInstanceState)
-                  val features = listOf(PackageManager.FEATURE_BLUETOOTH_LE, PackageManager.FEATURE_WIFI, PackageManager.FEATURE_WIFI_DIRECT, "android.hardware.wifi.aware")
-                  val report = buildString {
-                      appendLine("AirDrop feasibility inventory (not an AirDrop implementation)")
-                      appendLine("Android SDK: ${Build.VERSION.SDK_INT}")
-                      appendLine("Model: ${Build.MANUFACTURER} ${Build.MODEL}")
-                      features.forEach { appendLine("$it: ${packageManager.hasSystemFeature(it)}") }
-                      appendLine("AWDL compatibility NOT established.")
-                      appendLine("No iPhone discovery or file transfer implemented.")
-                  }
-                  setContentView(ScrollView(this).apply { addView(TextView(this@AirDropCapabilityProbeActivity).apply { text = report; textSize = 16f; setPadding(32,32,32,32); setTextIsSelectable(true) }) })
-              }
-          }
-          KOTLIN
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('source/app/src/debug/AndroidManifest.xml')
-          s=p.read_text()
-          insert='''        <activity android:name=".debug.AirDropCapabilityProbeActivity" android:exported="true" android:label="AirDrop Capability Probe">
-                      <intent-filter><action android:name="dev.bluehouse.bada.debug.AIRDROP_CAPABILITY_PROBE"/><category android:name="android.intent.category.DEFAULT"/></intent-filter>
-                  </activity>
-          '''
-          assert '</application>' in s
-          p.write_text(s.replace('</application>',insert+'</application>'))
-          PY
-      - uses: actions/setup-java@v4
+
+      - name: Inject read-only AirDrop capability screen
+        run: python3 scripts/inject_probe.py
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Build debug APK
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android API 36
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build a signed debug APK
         working-directory: source
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --stacktrace
-      - uses: actions/upload-artifact@v4
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Prepare installable APK
+        run: |
+          set -eu
+          apk="$(find source/app/build/outputs/apk/debug -name '*.apk' -type f -print -quit)"
+          test -n "$apk"
+          cp "$apk" Bada-AirDrop-Capability-debug.apk
+          test -s Bada-AirDrop-Capability-debug.apk
+          sha256sum Bada-AirDrop-Capability-debug.apk
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: Bada-AirDrop-Feasibility-APK
-          path: source/app/build/outputs/apk/debug/*.apk
+          name: Bada-AirDrop-Capability-APK
+          path: Bada-AirDrop-Capability-debug.apk
           if-no-files-found: error
+
+      - name: Publish APK as GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "probe-$GITHUB_RUN_NUMBER" Bada-AirDrop-Capability-debug.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Bada AirDrop capability probe #$GITHUB_RUN_NUMBER" \
+            --notes "Experimental signed debug APK. Not real AirDrop/AWDL transfer. Uses original Bada sources at build time. Installs separately from Bada release." \
+            --prerelease --latest=false
